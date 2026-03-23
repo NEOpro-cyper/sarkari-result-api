@@ -8,12 +8,11 @@ export const BASE_URL = 'https://www.sarkariresult.com'
 export async function fetchPage(url: string): Promise<ScrapedContent> {
   try {
     const zai = await ZAI.create()
-    const result = await zai.functions.invoke('page_reader', { url })
-    // Handle different response formats
+    const result = await zai.functions.invoke('page_reader', { url }) as any
     const data = result.data || result
     return { 
       html: data.html || '', 
-      text: data.text || '', 
+      text: '', 
       title: data.title, 
       url 
     }
