@@ -9,8 +9,17 @@ export async function fetchPage(url: string): Promise<ScrapedContent> {
   try {
     const zai = await ZAI.create()
     const result = await zai.functions.invoke('page_reader', { url })
-    return { html: result.html || result.data?.html || '', text: result.text || result.data?.text || '', title: result.title || result.data?.title, url }
-  } catch (error) { throw new Error(`Failed to fetch: ${url}`) }
+    // Handle different response formats
+    const data = result.data || result
+    return { 
+      html: data.html || '', 
+      text: data.text || '', 
+      title: data.title, 
+      url 
+    }
+  } catch (error) { 
+    throw new Error(`Failed to fetch: ${url}`) 
+  }
 }
 
 export async function getCachedData<T>(key: string, fetcher: () => Promise<T>): Promise<{ data: T; cached: boolean }> {
