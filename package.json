@@ -11,12 +11,15 @@
     "next": "^14.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "z-ai-web-dev-sdk": "^0.0.17"
+    "node-fetch": "^3.3.2",
+    "https-proxy-agent": "^7.0.4",
+    "cheerio": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/cheerio": "^0.22.35",
     "typescript": "^5.0.0",
     "eslint": "^8.0.0",
     "eslint-config-next": "^14.2.0"
