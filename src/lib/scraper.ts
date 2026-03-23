@@ -1,24 +1,35 @@
-import ZAI from 'z-ai-web-dev-sdk'
+import fetch from 'node-fetch'
+import { HttpsProxyAgent } from 'https-proxy-agent'
+import * as cheerio from 'cheerio'
 import type { HomePageData, NavigationItem, MarqueeItem, JobEntry, ResultEntry, AdmitCardEntry, AnswerKeyEntry, SyllabusEntry, AdmissionEntry, ImportantLink, ScrapedContent } from '@/types'
 
 const CACHE_DURATION = 5 * 60 * 1000
 const cache = new Map<string, { data: unknown; timestamp: number }>()
 export const BASE_URL = 'https://www.sarkariresult.com'
 
+const PROXY_URL = `http://${process.env.PROXY_USERNAME}:${process.env.PROXY_PASSWORD}@${process.env.PROXY_HOST}:${process.env.PROXY_PORT}`
+
 export async function fetchPage(url: string): Promise<ScrapedContent> {
-  try {
-    const zai = await ZAI.create()
-    const result = await zai.functions.invoke('page_reader', { url }) as any
-    const data = result.data || result
-    return { 
-      html: data.html || '', 
-      text: '', 
-      title: data.title, 
-      url 
-    }
-  } catch (error) { 
-    throw new Error(`Failed to fetch: ${url}`) 
-  }
+  const agent = new HttpsProxyAgent(PROXY_URL)
+
+  const res = await fetch(url, {
+    agent,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-IN,en;q=0.9',
+      'Referer': 'https://www.google.com/',
+    },
+    redirect: 'follow',
+  })
+
+  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`)
+
+  const html = await res.text()
+  const $ = cheerio.load(html)
+  const title = $('title').text().trim()
+
+  return { html, text: '', title, url }
 }
 
 export async function getCachedData<T>(key: string, fetcher: () => Promise<T>): Promise<{ data: T; cached: boolean }> {
