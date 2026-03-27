@@ -1,11 +1,21 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { scrapePage, getCachedData, BASE_URL } from '@/lib/scraper'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  const page = Math.max(1, parseInt(searchParams.get('page') || '1'))
+  const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '30')))
+  const cacheKey = `admitcard-p${page}-l${limit}`
+
   try {
-    const { data, cached } = await getCachedData('admitcard', () => scrapePage(`${BASE_URL}/admitcard/`))
+    const { data, cached } = await getCachedData(cacheKey, () =>
+      scrapePage(`${BASE_URL}/admitcard/`, page, limit)
+    )
     return NextResponse.json({ success: true, data, cached, timestamp: new Date().toISOString() })
   } catch (error) {
-    return NextResponse.json({ success: false, error: String(error), timestamp: new Date().toISOString() }, { status: 500 })
+    return NextResponse.json(
+      { success: false, error: String(error), timestamp: new Date().toISOString() },
+      { status: 500 }
+    )
   }
 }
