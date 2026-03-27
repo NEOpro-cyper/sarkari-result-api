@@ -2,19 +2,29 @@ import fetch from 'node-fetch'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import * as cheerio from 'cheerio'
 import type {
-  HomePageData, NavigationItem, MarqueeItem, JobEntry,
-  ResultEntry, AdmitCardEntry, AnswerKeyEntry, SyllabusEntry,
-  AdmissionEntry, ImportantLink, ScrapedContent
+  HomePageData,
+  NavigationItem,
+  MarqueeItem,
+  JobEntry,
+  ResultEntry,
+  AdmitCardEntry,
+  AnswerKeyEntry,
+  SyllabusEntry,
+  AdmissionEntry,
+  ScrapedContent,
+  PageResult,
+  DetailPageResult,
 } from '@/types'
 
-// ─── Config ───────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 export const BASE_URL = 'https://www.sarkariresult.com'
 const CACHE_DURATION = 10 * 60 * 1000 // 10 minutes
 const RETRY_ATTEMPTS = 3
 const RETRY_DELAY_MS = 1200
+const NAV_LABELS = ['Home', 'Latest Jobs', 'Results', 'Admit Card', 'Answer Key', 'Syllabus', 'Search', 'Contact Us']
 
-// ─── In-memory cache ──────────────────────────────────────────────────────────
+// ─── Cache ────────────────────────────────────────────────────────────────────
 
 const cache = new Map<string, { data: unknown; timestamp: number }>()
 
@@ -31,9 +41,20 @@ export async function getCachedData<T>(
   return { data, cached: false }
 }
 
-// ─── Browser-like headers ─────────────────────────────────────────────────────
+// ─── Path helper ──────────────────────────────────────────────────────────────
+// Returns internal path (e.g. "/admitcard/") or externalHref for outside links
+// Never returns the full sarkariresult.com domain
 
-function getBrowserHeaders(referer = BASE_URL) {
+function toPath(href: string): { path: string | null; externalHref: string | null } {
+  if (!href) return { path: null, externalHref: null }
+  if (href.startsWith(BASE_URL)) return { path: href.replace(BASE_URL, '') || '/', externalHref: null }
+  if (href.startsWith('/')) return { path: href, externalHref: null }
+  return { path: null, externalHref: href }
+}
+
+// ─── Headers ──────────────────────────────────────────────────────────────────
+
+function getBrowserHeaders(isInternal = false) {
   return {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -41,10 +62,10 @@ function getBrowserHeaders(referer = BASE_URL) {
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
-    'Referer': referer,
+    'Referer': BASE_URL,
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': referer === BASE_URL ? 'none' : 'same-origin',
+    'Sec-Fetch-Site': isInternal ? 'same-origin' : 'none',
     'Sec-Fetch-User': '?1',
     'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
     'sec-ch-ua-mobile': '?0',
@@ -52,17 +73,17 @@ function getBrowserHeaders(referer = BASE_URL) {
   }
 }
 
-// ─── Core fetch with retry ────────────────────────────────────────────────────
+// ─── Proxy ────────────────────────────────────────────────────────────────────
 
 function buildAgent() {
   const { PROXY_USERNAME, PROXY_PASSWORD, PROXY_HOST, PROXY_PORT } = process.env
   if (PROXY_USERNAME && PROXY_HOST) {
-    return new HttpsProxyAgent(
-      `http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}`
-    )
+    return new HttpsProxyAgent(`http://${PROXY_USERNAME}:${PROXY_PASSWORD}@${PROXY_HOST}:${PROXY_PORT}`)
   }
   return undefined
 }
+
+// ─── Fetch with retry ─────────────────────────────────────────────────────────
 
 async function fetchWithRetry(url: string, cookies = ''): Promise<string> {
   const agent = buildAgent()
@@ -73,14 +94,13 @@ async function fetchWithRetry(url: string, cookies = ''): Promise<string> {
       const res = await fetch(url, {
         agent,
         headers: {
-          ...getBrowserHeaders(isInternal ? BASE_URL : undefined),
+          ...getBrowserHeaders(isInternal),
           ...(cookies ? { Cookie: cookies } : {}),
         },
         redirect: 'follow',
       } as any)
 
-      // Treat redirect to /404.shtml as a real error
-      if (res.url.includes('404') || res.url.includes('not-found')) {
+      if ((res as any).url?.includes('404') || (res as any).url?.includes('not-found')) {
         throw new Error(`Page not found (redirected to 404): ${url}`)
       }
 
@@ -95,23 +115,20 @@ async function fetchWithRetry(url: string, cookies = ''): Promise<string> {
   throw new Error(`Failed after ${RETRY_ATTEMPTS} attempts: ${url}`)
 }
 
-// ─── Main page fetcher ────────────────────────────────────────────────────────
-// Single-request for listing pages (home, /admitcard/, /result/ etc.)
-// Two-request (cookie grab first) for internal detail pages
+// ─── Page fetcher ─────────────────────────────────────────────────────────────
+// For deep internal pages (2+ path segments), grabs cookies from home first
 
 export async function fetchPage(url: string): Promise<ScrapedContent> {
-  const isDetailPage = url !== BASE_URL &&
-    url.startsWith(BASE_URL) &&
-    url.replace(BASE_URL, '').split('/').filter(Boolean).length >= 2
+  const pathSegments = url.replace(BASE_URL, '').split('/').filter(Boolean)
+  const isDetailPage = pathSegments.length >= 2
 
   let html: string
 
   if (isDetailPage) {
-    // Grab cookies from home first, then fetch the detail page
     const agent = buildAgent()
     const cookieRes = await fetch(BASE_URL, {
       agent,
-      headers: getBrowserHeaders(),
+      headers: getBrowserHeaders(false),
       redirect: 'follow',
     } as any)
     const cookies = cookieRes.headers.get('set-cookie') || ''
@@ -131,98 +148,125 @@ export async function fetchPage(url: string): Promise<ScrapedContent> {
 function parseNavigation(html: string): NavigationItem[] {
   const navMatch = html.match(/<ul[^>]*class=["']navbar["'][^>]*>([\s\S]*?)<\/ul>/i)
   const items: NavigationItem[] = []
+
   if (navMatch) {
     const pattern = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi
     let m
     while ((m = pattern.exec(navMatch[1])) !== null) {
       const label = m[2].replace(/<[^>]*>/g, '').trim()
-      if (label) items.push({ label, href: m[1].startsWith('http') ? m[1] : `${BASE_URL}${m[1]}` })
+      if (NAV_LABELS.includes(label)) {
+        items.push({ label, path: toPath(m[1]).path || '/' })
+      }
     }
   }
-  return items.length > 0 ? items : [
-    { label: 'Home', href: `${BASE_URL}/` },
-    { label: 'Latest Jobs', href: `${BASE_URL}/latestjob/` },
-    { label: 'Results', href: `${BASE_URL}/result/` },
-    { label: 'Admit Card', href: `${BASE_URL}/admitcard/` },
-    { label: 'Answer Key', href: `${BASE_URL}/answerkey/` },
-    { label: 'Syllabus', href: `${BASE_URL}/syllabus/` },
-  ]
+
+  // Fallback
+  if (items.length === 0) {
+    return [
+      { label: 'Home', path: '/' },
+      { label: 'Latest Jobs', path: '/latestjob/' },
+      { label: 'Results', path: '/result/' },
+      { label: 'Admit Card', path: '/admitcard/' },
+      { label: 'Answer Key', path: '/answerkey/' },
+      { label: 'Syllabus', path: '/syllabus/' },
+      { label: 'Search', path: '/search/' },
+      { label: 'Contact Us', path: '/contactus/' },
+    ]
+  }
+
+  return items
 }
 
 function parseMarquees(html: string): MarqueeItem[] {
   const items: MarqueeItem[] = []
   const pattern = /<marquee[^>]*>([\s\S]*?)<\/marquee>/gi
   let mq, id = 1
+
   while ((mq = pattern.exec(html)) !== null) {
     const lp = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi
     let lm
     while ((lm = lp.exec(mq[1])) !== null) {
       const text = lm[2].replace(/<[^>]*>/g, '').trim()
-      if (text) items.push({
-        id: `m${id++}`, text,
-        href: lm[1].startsWith('http') ? lm[1] : `${BASE_URL}${lm[1]}`,
+      if (!text) continue
+      const { path, externalHref } = toPath(lm[1])
+      items.push({
+        id: `m${id++}`,
+        text,
+        path,
+        externalHref,
         isImportant: /admit card|last date/i.test(text),
       })
     }
   }
+
   return items
 }
 
-// Improved: extracts all <a> tags from the page, not just inside <table>
-// This fixes admit card / result dedicated pages which use <li> or <div> lists
-function parseAllPageLinks(html: string): Array<{ title: string; href: string; isNew: boolean; isUpdated: boolean }> {
+function parseAllPageLinks(html: string): Array<{
+  title: string
+  path: string | null
+  externalHref: string | null
+  isNew: boolean
+  isUpdated: boolean
+}> {
   const $ = cheerio.load(html)
-  const entries: Array<{ title: string; href: string; isNew: boolean; isUpdated: boolean }> = []
+  const entries: Array<{
+    title: string
+    path: string | null
+    externalHref: string | null
+    isNew: boolean
+    isUpdated: boolean
+  }> = []
   const seen = new Set<string>()
 
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href') || ''
     const title = $(el).text().replace(/\s+/g, ' ').trim()
-    const parent = $(el).parent().text()
+    const parentText = $(el).parent().text()
 
     if (!href || href.includes('javascript:') || href.startsWith('#')) return
     if (title.length < 5) return
-    // Skip nav/footer links
-    if (/home|contact|privacy|sitemap|about/i.test(title) && title.length < 15) return
+    if (/^(home|contact|privacy|sitemap|about)$/i.test(title)) return
 
-    const fullHref = href.startsWith('http') ? href : `${BASE_URL}${href}`
-    const key = `${title}|${fullHref}`
+    const { path, externalHref } = toPath(href)
+    const key = `${title}|${path ?? externalHref}`
     if (seen.has(key)) return
     seen.add(key)
 
     entries.push({
       title,
-      href: fullHref,
-      isNew: /\bnew\b/i.test(parent),
-      isUpdated: /updated/i.test(parent),
+      path,
+      externalHref,
+      isNew: /\bnew\b/i.test(parentText),
+      isUpdated: /updated/i.test(parentText),
     })
   })
 
   return entries
 }
 
-// For the home page table sections — keeps keyword filtering
-function parseSection(html: string, keywords: string[]): Array<{ title: string; href: string; isNew: boolean; isUpdated: boolean }> {
-  return parseAllPageLinks(html).filter(e =>
+function filterByKeywords(
+  items: ReturnType<typeof parseAllPageLinks>,
+  keywords: string[]
+) {
+  return items.filter(e =>
     keywords.some(k => e.title.toLowerCase().includes(k.toLowerCase()))
   )
 }
 
-function toJobEntries(items: ReturnType<typeof parseAllPageLinks>): JobEntry[] {
-  return items.slice(0, 30).map((e, i) => ({
-    id: `job${i + 1}`, title: e.title, href: e.href,
-    postDate: new Date().toLocaleDateString('en-IN'),
-  }))
-}
-
-function toTypedEntries<T extends { id: string; title: string; href: string; postDate: string }>(
+function toTypedEntries<T>(
   items: ReturnType<typeof parseAllPageLinks>,
   prefix: string,
   limit = 30
 ): T[] {
   return items.slice(0, limit).map((e, i) => ({
-    id: `${prefix}${i + 1}`, title: e.title, href: e.href,
+    id: `${prefix}${i + 1}`,
+    title: e.title,
+    path: e.path,
+    externalHref: e.externalHref,
     postDate: new Date().toLocaleDateString('en-IN'),
+    isNew: e.isNew,
+    isUpdated: e.isUpdated,
   })) as T[]
 }
 
@@ -230,80 +274,89 @@ function toTypedEntries<T extends { id: string; title: string; href: string; pos
 
 export async function scrapeHomePage(): Promise<HomePageData> {
   const { html } = await fetchPage(BASE_URL)
+  const allLinks = parseAllPageLinks(html)
+
   return {
     navigation: parseNavigation(html),
     marquees: parseMarquees(html),
-    latestJobs: toJobEntries(parseSection(html, ['recruitment', 'apply', 'vacancy', 'post', 'job', 'form', 'bharti', 'online'])),
-    results: toTypedEntries<ResultEntry>(parseSection(html, ['result', 'score card', 'marks', 'merit', 'cut off']), 'res'),
-    admitCards: toTypedEntries<AdmitCardEntry>(parseSection(html, ['admit card', 'hall ticket', 'call letter', 'exam city']), 'adm'),
-    answerKeys: toTypedEntries<AnswerKeyEntry>(parseSection(html, ['answer key', 'response sheet']), 'ans'),
-    syllabus: toTypedEntries<SyllabusEntry>(parseSection(html, ['syllabus', 'exam pattern']), 'syl'),
-    admissions: toTypedEntries<AdmissionEntry>(parseSection(html, ['admission', 'registration', 'enrollment']), 'adms'),
+    latestJobs: toTypedEntries<JobEntry>(
+      filterByKeywords(allLinks, ['recruitment', 'apply', 'vacancy', 'post', 'form', 'bharti', 'online']),
+      'job'
+    ),
+    results: toTypedEntries<ResultEntry>(
+      filterByKeywords(allLinks, ['result', 'score card', 'marks', 'merit', 'cut off']),
+      'res'
+    ),
+    admitCards: toTypedEntries<AdmitCardEntry>(
+      filterByKeywords(allLinks, ['admit card', 'hall ticket', 'call letter', 'exam city']),
+      'adm'
+    ),
+    answerKeys: toTypedEntries<AnswerKeyEntry>(
+      filterByKeywords(allLinks, ['answer key', 'response sheet']),
+      'ans'
+    ),
+    syllabus: toTypedEntries<SyllabusEntry>(
+      filterByKeywords(allLinks, ['syllabus', 'exam pattern']),
+      'syl'
+    ),
+    admissions: toTypedEntries<AdmissionEntry>(
+      filterByKeywords(allLinks, ['admission', 'registration', 'enrollment']),
+      'adms'
+    ),
     importantLinks: [],
     lastUpdated: new Date().toISOString(),
   }
 }
 
-// Used by all dedicated listing endpoints (/admitcard/, /result/, etc.)
-// No keyword filter — return everything on the page, they're all relevant
+// Used by /admitcard/, /result/, /latestjob/ etc. — no keyword filter needed
 export async function scrapePage(
   url: string,
   page = 1,
   limit = 30
-): Promise<{
-  title: string
-  entries: Array<{ title: string; href: string; isNew: boolean; isUpdated: boolean }>
-  page: number
-  limit: number
-  total: number
-  hasMore: boolean
-}> {
+): Promise<PageResult> {
   const { html, title } = await fetchPage(url)
-  const all = parseAllPageLinks(html)
-
-  // Remove nav/header links that repeat on every page
-  const filtered = all.filter(e =>
-    e.href !== BASE_URL &&
-    e.href !== `${BASE_URL}/` &&
-    !e.href.includes('/search') &&
-    !e.href.includes('/contactus') &&
-    !e.href.includes('/privacy')
+  const all = parseAllPageLinks(html).filter(e =>
+    e.path !== '/' &&
+    e.path !== null &&
+    !e.path.includes('/search') &&
+    !e.path.includes('/contactus') &&
+    !e.path.includes('/privacy')
   )
 
   const start = (page - 1) * limit
-  const entries = filtered.slice(start, start + limit)
+  const entries = all.slice(start, start + limit)
 
   return {
     title: title || 'Page',
     entries,
     page,
     limit,
-    total: filtered.length,
-    hasMore: start + limit < filtered.length,
+    total: all.length,
+    hasMore: start + limit < all.length,
   }
 }
 
-// Scrape any internal detail page (e.g. /mp/mpesb-iti-training-officer-jan26/)
-export async function scrapeDetailPage(url: string): Promise<{
-  title: string
-  links: Array<{ title: string; href: string }>
-  tables: Array<{ heading: string; rows: Array<{ label: string; value: string }> }>
-}> {
+// Used by /api/scrape/detail?url=/mp/mpesb-iti-training-officer-jan26/
+export async function scrapeDetailPage(url: string): Promise<DetailPageResult> {
   const { html, title } = await fetchPage(url)
   const $ = cheerio.load(html)
 
-  // Extract all meaningful links
-  const links: Array<{ title: string; href: string }> = []
+  const links: DetailPageResult['links'] = []
+  const seen = new Set<string>()
+
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href') || ''
     const text = $(el).text().replace(/\s+/g, ' ').trim()
     if (!href || href.includes('javascript:') || href.startsWith('#')) return
     if (text.length < 4) return
-    links.push({ title: text, href: href.startsWith('http') ? href : `${BASE_URL}${href}` })
+    const { path, externalHref } = toPath(href)
+    const key = `${text}|${path ?? externalHref}`
+    if (seen.has(key)) return
+    seen.add(key)
+    links.push({ title: text, path, externalHref })
   })
 
-  // Extract key-value tables (important dates, fee, eligibility etc.)
-  const tables: Array<{ heading: string; rows: Array<{ label: string; value: string }> }> = []
+  const tables: DetailPageResult['tables'] = []
   $('table').each((_, table) => {
     const rows: Array<{ label: string; value: string }> = []
     $(table).find('tr').each((_, tr) => {
