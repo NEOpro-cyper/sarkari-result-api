@@ -1,12 +1,82 @@
-export interface NavigationItem { label: string; href: string }
-export interface MarqueeItem { id: string; text: string; href?: string; isImportant?: boolean }
-export interface JobEntry { id: string; title: string; href: string; postDate: string; lastDate?: string }
-export interface ResultEntry { id: string; title: string; href: string; postDate: string }
-export interface AdmitCardEntry { id: string; title: string; href: string; postDate: string }
-export interface AnswerKeyEntry { id: string; title: string; href: string; postDate: string }
-export interface SyllabusEntry { id: string; title: string; href: string; postDate: string }
-export interface AdmissionEntry { id: string; title: string; href: string; postDate: string }
-export interface ImportantLink { id: string; title: string; href: string }
+export interface NavigationItem {
+  label: string
+  path: string
+}
+
+export interface MarqueeItem {
+  id: string
+  text: string
+  path: string | null
+  externalHref: string | null
+  isImportant: boolean
+}
+
+export interface JobEntry {
+  id: string
+  title: string
+  path: string | null
+  externalHref: string | null
+  postDate: string
+  isNew: boolean
+  isUpdated: boolean
+}
+
+export interface ResultEntry {
+  id: string
+  title: string
+  path: string | null
+  externalHref: string | null
+  postDate: string
+  isNew: boolean
+  isUpdated: boolean
+}
+
+export interface AdmitCardEntry {
+  id: string
+  title: string
+  path: string | null
+  externalHref: string | null
+  postDate: string
+  isNew: boolean
+  isUpdated: boolean
+}
+
+export interface AnswerKeyEntry {
+  id: string
+  title: string
+  path: string | null
+  externalHref: string | null
+  postDate: string
+  isNew: boolean
+  isUpdated: boolean
+}
+
+export interface SyllabusEntry {
+  id: string
+  title: string
+  path: string | null
+  externalHref: string | null
+  postDate: string
+  isNew: boolean
+  isUpdated: boolean
+}
+
+export interface AdmissionEntry {
+  id: string
+  title: string
+  path: string | null
+  externalHref: string | null
+  postDate: string
+  isNew: boolean
+  isUpdated: boolean
+}
+
+export interface ImportantLink {
+  id: string
+  title: string
+  path: string | null
+  externalHref: string | null
+}
 
 export interface HomePageData {
   navigation: NavigationItem[]
@@ -21,11 +91,17 @@ export interface HomePageData {
   lastUpdated: string
 }
 
-export interface ScrapedContent { html: string; text: string; title?: string; url: string }
+export interface ScrapedContent {
+  html: string
+  text: string
+  title?: string
+  url: string
+}
 
 export interface PageEntry {
   title: string
-  href: string
+  path: string | null
+  externalHref: string | null
   isNew: boolean
   isUpdated: boolean
 }
@@ -46,7 +122,7 @@ export interface DetailTable {
 
 export interface DetailPageResult {
   title: string
-  links: Array<{ title: string; href: string }>
+  links: Array<{ title: string; path: string | null; externalHref: string | null }>
   tables: DetailTable[]
 }
 
