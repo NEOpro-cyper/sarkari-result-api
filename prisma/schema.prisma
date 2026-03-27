@@ -1,0 +1,42 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Main job listing model - matches the anime API response structure
+model JobListing {
+  id              String    @id @default(cuid())
+  dataId          String    @unique
+  poster          String
+  title           String
+  hindiTitle      String?
+  description     String
+  
+  // Job Info (similar to tvInfo in anime API)
+  jobType         String    // e.g., "Government", "Private", "Contract"
+  duration        String    // e.g., "Full Time", "Part Time"
+  releaseDate     String    // Application start date
+  quality         String    // e.g., "HD" -> "Active", "Closed"
+  
+  // Episode info equivalent - vacancies info
+  totalVacancies  Int       @default(0)
+  appliedCount    Int       @default(0)
+  
+  // Additional job-specific fields
+  department      String?
+  location        String?
+  lastDate        String?
+  salary          String?
+  applyLink       String?
+  officialLink    String?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
