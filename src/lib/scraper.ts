@@ -292,7 +292,10 @@ export async function scrapeHomePage(): Promise<HomePageData> {
     const box = headingAnchor.closest('div[id^="box"], div.table-center')
     if (!box.length) return results
 
-    box.find('#post').first().find('a[href]').each((_, el) => {
+    // #post id is duplicated across page — find it directly inside this box
+    // by looking for the div that contains the list items
+    const postDiv = box.find('ul li a[href]').first().closest('div')
+    postDiv.find('a[href]').each((_, el) => {
       const href = $(el).attr('href') || ''
       const title = $(el).text().replace(/\s+/g, ' ').trim()
       if (!href || href.includes('javascript:') || href.startsWith('#')) return
