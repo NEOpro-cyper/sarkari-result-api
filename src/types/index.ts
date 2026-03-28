@@ -11,7 +11,14 @@ export interface MarqueeItem {
   isImportant: boolean
 }
 
-export interface JobEntry {
+export interface SpotlightItem {
+  title: string
+  action: string
+  path: string | null
+  externalHref: string | null
+}
+
+export interface BaseEntry {
   id: string
   title: string
   path: string | null
@@ -21,115 +28,61 @@ export interface JobEntry {
   isUpdated: boolean
 }
 
-export interface ResultEntry {
-  id: string
-  title: string
-  path: string | null
-  externalHref: string | null
-  postDate: string
-  isNew: boolean
-  isUpdated: boolean
-}
-
-export interface AdmitCardEntry {
-  id: string
-  title: string
-  path: string | null
-  externalHref: string | null
-  postDate: string
-  isNew: boolean
-  isUpdated: boolean
-}
-
-export interface AnswerKeyEntry {
-  id: string
-  title: string
-  path: string | null
-  externalHref: string | null
-  postDate: string
-  isNew: boolean
-  isUpdated: boolean
-}
-
-export interface SyllabusEntry {
-  id: string
-  title: string
-  path: string | null
-  externalHref: string | null
-  postDate: string
-  isNew: boolean
-  isUpdated: boolean
-}
-
-export interface AdmissionEntry {
-  id: string
-  title: string
-  path: string | null
-  externalHref: string | null
-  postDate: string
-  isNew: boolean
-  isUpdated: boolean
-}
-
-export interface ImportantLink {
-  id: string
-  title: string
-  path: string | null
-  externalHref: string | null
-}
+export interface JobEntry extends BaseEntry {}
+export interface ResultEntry extends BaseEntry {}
+export interface AdmitCardEntry extends BaseEntry {}
+export interface AnswerKeyEntry extends BaseEntry {}
+export interface SyllabusEntry extends BaseEntry {}
+export interface AdmissionEntry extends BaseEntry {}
+export interface ImportantEntry extends BaseEntry {}
+export interface VerificationEntry extends BaseEntry {}
 
 export interface HomePageData {
   navigation: NavigationItem[]
   marquees: MarqueeItem[]
+  spotlightGrid: SpotlightItem[]
   latestJobs: JobEntry[]
   results: ResultEntry[]
   admitCards: AdmitCardEntry[]
   answerKeys: AnswerKeyEntry[]
   syllabus: SyllabusEntry[]
   admissions: AdmissionEntry[]
-  importantLinks: ImportantLink[]
+  important: ImportantEntry[]
+  verification: VerificationEntry[]
   lastUpdated: string
 }
 
 export interface ScrapedContent {
   html: string
   text: string
-  title?: string
-  url: string
-}
-
-export interface PageEntry {
   title: string
-  path: string | null
-  externalHref: string | null
-  isNew: boolean
-  isUpdated: boolean
+  url: string
 }
 
 export interface PageResult {
   title: string
-  entries: PageEntry[]
+  entries: Array<{
+    title: string
+    path: string | null
+    externalHref: string | null
+    isNew: boolean
+    isUpdated: boolean
+  }>
   page: number
   limit: number
   total: number
   hasMore: boolean
 }
 
-export interface DetailTable {
-  heading: string
-  rows: Array<{ label: string; value: string }>
-}
-
 export interface DetailPageResult {
   title: string
-  links: Array<{ title: string; path: string | null; externalHref: string | null }>
-  tables: DetailTable[]
-}
-
-export interface ApiResponse<T> {
-  success: boolean
-  data?: T
-  error?: string
-  cached?: boolean
-  timestamp: string
+  links: Array<{
+    title: string
+    path: string | null
+    externalHref: string | null
+  }>
+  tables: Array<{
+    heading: string
+    rows: Array<{ label: string; value: string }>
+  }>
 }
