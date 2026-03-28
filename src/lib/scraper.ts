@@ -266,7 +266,8 @@ function toTypedEntries<T>(
 
 // ─── FIXED: Extract section by finding the correct structure ─────────────────
 
-function extractSectionByHeadingText($: cheerio.CheerioAPI, headingText: string) {
+function extractSectionByHeadingText(html: string, headingText: string) {
+  const $ = cheerio.load(html)
   const results: Array<{
     title: string
     path: string | null
@@ -344,14 +345,14 @@ export async function scrapeHomePage(): Promise<HomePageData> {
     navigation:   parseNavigation(html),
     marquees:     parseMarquees(html),
     spotlightGrid,
-    latestJobs:   toTypedEntries<JobEntry>(extractSectionByHeadingText($, 'Latest Jobs'), 'job'),
-    results:      toTypedEntries<ResultEntry>(extractSectionByHeadingText($, 'Result'), 'res'),
-    admitCards:   toTypedEntries<AdmitCardEntry>(extractSectionByHeadingText($, 'Admit Card'), 'adm'),
-    answerKeys:   toTypedEntries<AnswerKeyEntry>(extractSectionByHeadingText($, 'Answer Key'), 'ans'),
-    syllabus:     toTypedEntries<SyllabusEntry>(extractSectionByHeadingText($, 'Syllabus'), 'syl'),
-    admissions:   toTypedEntries<AdmissionEntry>(extractSectionByHeadingText($, 'Admission'), 'adms'),
-    important:    toTypedEntries<ImportantEntry>(extractSectionByHeadingText($, 'Important'), 'imp'),
-    verification: toTypedEntries<VerificationEntry>(extractSectionByHeadingText($, 'Certificate Verification'), 'ver'),
+    latestJobs:   toTypedEntries<JobEntry>(extractSectionByHeadingText(html, 'Latest Jobs'), 'job'),
+    results:      toTypedEntries<ResultEntry>(extractSectionByHeadingText(html, 'Result'), 'res'),
+    admitCards:   toTypedEntries<AdmitCardEntry>(extractSectionByHeadingText(html, 'Admit Card'), 'adm'),
+    answerKeys:   toTypedEntries<AnswerKeyEntry>(extractSectionByHeadingText(html, 'Answer Key'), 'ans'),
+    syllabus:     toTypedEntries<SyllabusEntry>(extractSectionByHeadingText(html, 'Syllabus'), 'syl'),
+    admissions:   toTypedEntries<AdmissionEntry>(extractSectionByHeadingText(html, 'Admission'), 'adms'),
+    important:    toTypedEntries<ImportantEntry>(extractSectionByHeadingText(html, 'Important'), 'imp'),
+    verification: toTypedEntries<VerificationEntry>(extractSectionByHeadingText(html, 'Certificate Verification'), 'ver'),
     lastUpdated:  new Date().toISOString(),
   }
 }
