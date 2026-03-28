@@ -274,35 +274,33 @@ function toTypedEntries<T>(
 
 export async function scrapeHomePage(): Promise<HomePageData> {
   const { html } = await fetchPage(BASE_URL)
-  const allLinks = parseAllPageLinks(html)
+  const $ = cheerio.load(html)
+
+  function extractBoxLinks(heading: string) {
+    // Find the heading anchor, go up to its box container, extract all post links
+    return $(`a:contains("${heading}")`)
+      .closest('#box1, #box2, [id^="box"]')
+      .find('#post a[href]')
+      .map((_, el) => {
+        const href = $(el).attr('href') || ''
+        const title = $(el).text().replace(/\s+/g, ' ').trim()
+        const parentText = $(el).parent().text()
+        const { path, externalHref } = toPath(href)
+        return { title, path, externalHref, isNew: /\bnew\b/i.test(parentText), isUpdated: /updated/i.test(parentText) }
+      })
+      .get()
+      .filter(e => e.title.length >= 5)
+  }
 
   return {
     navigation: parseNavigation(html),
     marquees: parseMarquees(html),
-    latestJobs: toTypedEntries<JobEntry>(
-      filterByKeywords(allLinks, ['recruitment', 'apply', 'vacancy', 'post', 'form', 'bharti', 'online']),
-      'job'
-    ),
-    results: toTypedEntries<ResultEntry>(
-      filterByKeywords(allLinks, ['result', 'score card', 'marks', 'merit', 'cut off']),
-      'res'
-    ),
-    admitCards: toTypedEntries<AdmitCardEntry>(
-      filterByKeywords(allLinks, ['admit card', 'hall ticket', 'call letter', 'exam city']),
-      'adm'
-    ),
-    answerKeys: toTypedEntries<AnswerKeyEntry>(
-      filterByKeywords(allLinks, ['answer key', 'response sheet']),
-      'ans'
-    ),
-    syllabus: toTypedEntries<SyllabusEntry>(
-      filterByKeywords(allLinks, ['syllabus', 'exam pattern']),
-      'syl'
-    ),
-    admissions: toTypedEntries<AdmissionEntry>(
-      filterByKeywords(allLinks, ['admission', 'registration', 'enrollment']),
-      'adms'
-    ),
+    latestJobs:  toTypedEntries<JobEntry>(extractBoxLinks('Latest Jobs'), 'job'),
+    results:     toTypedEntries<ResultEntry>(extractBoxLinks('Result'), 'res'),
+    admitCards:  toTypedEntries<AdmitCardEntry>(extractBoxLinks('Admit Card'), 'adm'),
+    answerKeys:  toTypedEntries<AnswerKeyEntry>(extractBoxLinks('Answer Key'), 'ans'),
+    syllabus:    toTypedEntries<SyllabusEntry>(extractBoxLinks('Syllabus'), 'syl'),
+    admissions:  toTypedEntries<AdmissionEntry>(extractBoxLinks('Admission'), 'adms'),
     importantLinks: [],
     lastUpdated: new Date().toISOString(),
   }
