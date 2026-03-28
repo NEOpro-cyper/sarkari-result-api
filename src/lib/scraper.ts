@@ -202,6 +202,62 @@ function parseMarquees(html: string): MarqueeItem[] {
   return items
 }
 
+// NEW: Parse section from HTML structure
+function parseSectionFromHTML($: cheerio.CheerioAPI, sectionTitle: string): Array<{
+  title: string
+  path: string | null
+  externalHref: string | null
+  isNew: boolean
+  isUpdated: boolean
+}> {
+  const entries: Array<{
+    title: string
+    path: string | null
+    externalHref: string | null
+    isNew: boolean
+    isUpdated: boolean
+  }> = []
+  
+  const seen = new Set<string>()
+
+  // Find the heading that matches our section
+  $('div#heading div#font a, div#heading div a').each((_, headingEl) => {
+    const headingText = $(headingEl).text().trim()
+    
+    if (headingText === sectionTitle) {
+      // Get the parent box container
+      const boxContainer = $(headingEl).closest('div[id^="box"]')
+      
+      // Find all links in the post section of this box
+      boxContainer.find('div#post ul li a').each((_, linkEl) => {
+        const href = $(linkEl).attr('href') || ''
+        const title = $(linkEl).text().replace(/\s+/g, ' ').trim()
+        const parentText = $(linkEl).parent().text()
+        
+        if (!href || href.includes('javascript:') || href.startsWith('#')) return
+        if (title.length < 5) return
+        
+        const { path, externalHref } = toPath(href)
+        const key = `${title}|${path ?? externalHref}`
+        
+        if (seen.has(key)) return
+        seen.add(key)
+        
+        entries.push({
+          title,
+          path,
+          externalHref,
+          isNew: /\bnew\b/i.test(parentText),
+          isUpdated: /updated/i.test(parentText),
+        })
+      })
+    }
+  })
+
+  return entries
+}
+
+// FALLBACK: Parse all links (used by other page types)
 function parseAllPageLinks(html: string): Array<{
   title: string
   path: string | null
@@ -245,17 +301,8 @@ function parseAllPageLinks(html: string): Array<{
   return entries
 }
 
-function filterByKeywords(
-  items: ReturnType<typeof parseAllPageLinks>,
-  keywords: string[]
-) {
-  return items.filter(e =>
-    keywords.some(k => e.title.toLowerCase().includes(k.toLowerCase()))
-  )
-}
-
 function toTypedEntries<T>(
-  items: ReturnType<typeof parseAllPageLinks>,
+  items: ReturnType<typeof parseSectionFromHTML>,
   prefix: string,
   limit = 30
 ): T[] {
@@ -274,36 +321,39 @@ function toTypedEntries<T>(
 
 export async function scrapeHomePage(): Promise<HomePageData> {
   const { html } = await fetchPage(BASE_URL)
-  const allLinks = parseAllPageLinks(html)
+  const $ = cheerio.load(html)
 
   return {
     navigation: parseNavigation(html),
     marquees: parseMarquees(html),
     latestJobs: toTypedEntries<JobEntry>(
-      filterByKeywords(allLinks, ['recruitment', 'apply', 'vacancy', 'post', 'form', 'bharti', 'online']),
+      parseSectionFromHTML($, 'Latest Jobs'),
       'job'
     ),
     results: toTypedEntries<ResultEntry>(
-      filterByKeywords(allLinks, ['result', 'score card', 'marks', 'merit', 'cut off']),
+      parseSectionFromHTML($, 'Result'),
       'res'
     ),
     admitCards: toTypedEntries<AdmitCardEntry>(
-      filterByKeywords(allLinks, ['admit card', 'hall ticket', 'call letter', 'exam city']),
+      parseSectionFromHTML($, 'Admit Card'),
       'adm'
     ),
     answerKeys: toTypedEntries<AnswerKeyEntry>(
-      filterByKeywords(allLinks, ['answer key', 'response sheet']),
+      parseSectionFromHTML($, 'Answer Key'),
       'ans'
     ),
     syllabus: toTypedEntries<SyllabusEntry>(
-      filterByKeywords(allLinks, ['syllabus', 'exam pattern']),
+      parseSectionFromHTML($, 'Syllabus'),
       'syl'
     ),
     admissions: toTypedEntries<AdmissionEntry>(
-      filterByKeywords(allLinks, ['admission', 'registration', 'enrollment']),
+      parseSectionFromHTML($, 'Admission'),
       'adms'
     ),
-    importantLinks: [],
+    importantLinks: toTypedEntries<any>(
+      parseSectionFromHTML($, 'Important'),
+      'imp'
+    ),
     lastUpdated: new Date().toISOString(),
   }
 }
