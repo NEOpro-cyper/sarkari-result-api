@@ -271,8 +271,7 @@ export async function scrapeHomePage(): Promise<HomePageData> {
   const $ = cheerio.load(html)
 
   // ── Extract links from a section by its heading href ──────────────────────
-  // This is the most reliable selector — each section heading has a unique href
-  function extractSection(headingHref: string) {
+function extractSection(headingHref: string) {
     const results: Array<{
       title: string
       path: string | null
@@ -282,19 +281,20 @@ export async function scrapeHomePage(): Promise<HomePageData> {
     }> = []
     const seen = new Set<string>()
 
-    // Find heading anchor by href (handles both full URL and path forms)
     const fullHref = `${BASE_URL}${headingHref}`
     const headingAnchor = $(`a[href="${fullHref}"], a[href="${headingHref}"]`).first()
     if (!headingAnchor.length) return results
 
-    // Walk up to the immediate containing div, then find only the FIRST #post
-    // Using .parent() chain to avoid crossing into sibling boxes
-    const box = headingAnchor.closest('div[id^="box"], div.table-center')
-    if (!box.length) return results
+    // #heading div is the anchor's grandparent (a > div#font > div#heading)
+    // OR the anchor's direct parent for some sections
+    // Either way, walk up to the div that has id="heading"
+    const headingDiv = headingAnchor.closest('[id="heading"]')
+    if (!headingDiv.length) return results
 
-    // #post id is duplicated across page — find it directly inside this box
-    // by looking for the div that contains the list items
-    const postDiv = box.find('ul li a[href]').first().closest('div')
+    // #post is the next sibling div after #heading inside the same box
+    const postDiv = headingDiv.next('[id="post"]')
+    if (!postDiv.length) return results
+
     postDiv.find('a[href]').each((_, el) => {
       const href = $(el).attr('href') || ''
       const title = $(el).text().replace(/\s+/g, ' ').trim()
