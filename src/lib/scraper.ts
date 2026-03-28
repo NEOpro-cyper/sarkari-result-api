@@ -11,6 +11,8 @@ import type {
   AnswerKeyEntry,
   SyllabusEntry,
   AdmissionEntry,
+  ImportantEntry,
+  VerificationEntry,
   ScrapedContent,
   PageResult,
   DetailPageResult,
@@ -19,7 +21,7 @@ import type {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 export const BASE_URL = 'https://www.sarkariresult.com'
-const CACHE_DURATION = 10 * 60 * 1000 // 10 minutes
+const CACHE_DURATION = 10 * 60 * 1000
 const RETRY_ATTEMPTS = 3
 const RETRY_DELAY_MS = 1200
 const NAV_LABELS = ['Home', 'Latest Jobs', 'Results', 'Admit Card', 'Answer Key', 'Syllabus', 'Search', 'Contact Us']
@@ -42,8 +44,6 @@ export async function getCachedData<T>(
 }
 
 // ─── Path helper ──────────────────────────────────────────────────────────────
-// Returns internal path (e.g. "/admitcard/") or externalHref for outside links
-// Never returns the full sarkariresult.com domain
 
 function toPath(href: string): { path: string | null; externalHref: string | null } {
   if (!href) return { path: null, externalHref: null }
@@ -105,7 +105,6 @@ async function fetchWithRetry(url: string, cookies = ''): Promise<string> {
       }
 
       if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
-
       return await res.text()
     } catch (err) {
       if (attempt === RETRY_ATTEMPTS) throw err
@@ -116,7 +115,6 @@ async function fetchWithRetry(url: string, cookies = ''): Promise<string> {
 }
 
 // ─── Page fetcher ─────────────────────────────────────────────────────────────
-// For deep internal pages (2+ path segments), grabs cookies from home first
 
 export async function fetchPage(url: string): Promise<ScrapedContent> {
   const pathSegments = url.replace(BASE_URL, '').split('/').filter(Boolean)
@@ -160,7 +158,6 @@ function parseNavigation(html: string): NavigationItem[] {
     }
   }
 
-  // Fallback
   if (items.length === 0) {
     return [
       { label: 'Home', path: '/' },
@@ -245,17 +242,14 @@ function parseAllPageLinks(html: string): Array<{
   return entries
 }
 
-function filterByKeywords(
-  items: ReturnType<typeof parseAllPageLinks>,
-  keywords: string[]
-) {
-  return items.filter(e =>
-    keywords.some(k => e.title.toLowerCase().includes(k.toLowerCase()))
-  )
-}
-
 function toTypedEntries<T>(
-  items: ReturnType<typeof parseAllPageLinks>,
+  items: Array<{
+    title: string
+    path: string | null
+    externalHref: string | null
+    isNew: boolean
+    isUpdated: boolean
+  }>,
   prefix: string,
   limit = 30
 ): T[] {
@@ -270,43 +264,90 @@ function toTypedEntries<T>(
   })) as T[]
 }
 
-// ─── Public scrape functions ──────────────────────────────────────────────────
+// ─── Home page scraper ────────────────────────────────────────────────────────
 
 export async function scrapeHomePage(): Promise<HomePageData> {
   const { html } = await fetchPage(BASE_URL)
   const $ = cheerio.load(html)
 
-  function extractBoxLinks(heading: string) {
-    // Find the heading anchor, go up to its box container, extract all post links
-    return $(`a:contains("${heading}")`)
-      .closest('#box1, #box2, [id^="box"]')
-      .find('#post a[href]')
-      .map((_, el) => {
-        const href = $(el).attr('href') || ''
-        const title = $(el).text().replace(/\s+/g, ' ').trim()
-        const parentText = $(el).parent().text()
-        const { path, externalHref } = toPath(href)
-        return { title, path, externalHref, isNew: /\bnew\b/i.test(parentText), isUpdated: /updated/i.test(parentText) }
+  // ── Extract links from a section by its heading href ──────────────────────
+  // This is the most reliable selector — each section heading has a unique href
+  function extractSection(headingHref: string) {
+    const results: Array<{
+      title: string
+      path: string | null
+      externalHref: string | null
+      isNew: boolean
+      isUpdated: boolean
+    }> = []
+    const seen = new Set<string>()
+
+    // Find heading anchor by href (handles both full URL and path forms)
+    const fullHref = `${BASE_URL}${headingHref}`
+    const headingAnchor = $(`a[href="${fullHref}"], a[href="${headingHref}"]`).first()
+    if (!headingAnchor.length) return results
+
+    // Walk up to the immediate containing div, then find only the FIRST #post
+    // Using .parent() chain to avoid crossing into sibling boxes
+    const box = headingAnchor.closest('div[id^="box"], div.table-center')
+    if (!box.length) return results
+
+    box.children('#post').first().find('a[href]').each((_, el) => {
+      const href = $(el).attr('href') || ''
+      const title = $(el).text().replace(/\s+/g, ' ').trim()
+      if (!href || href.includes('javascript:') || href.startsWith('#')) return
+      if (title.length < 5) return
+
+      const { path, externalHref } = toPath(href)
+      const key = `${title}|${path ?? externalHref}`
+      if (seen.has(key)) return
+      seen.add(key)
+
+      const liText = $(el).closest('li').text()
+      results.push({
+        title,
+        path,
+        externalHref,
+        isNew: /\bnew\b/i.test(liText),
+        isUpdated: /updated/i.test(liText),
       })
-      .get()
-      .filter(e => e.title.length >= 5)
+    })
+
+    return results
   }
 
+  // ── Spotlight grid (8 icon buttons) ──────────────────────────────────────
+  const spotlightGrid = $('table.box-data').first().find('td').map((_, td) => {
+    const a = $(td).find('a').first()
+    const href = a.attr('href') || ''
+    const lines = a.text().split(/\n/).map(s => s.trim()).filter(Boolean)
+    const { path, externalHref } = toPath(href)
+    return {
+      title: lines[0] || '',
+      action: lines[1] || '',
+      path,
+      externalHref,
+    }
+  }).get().filter(e => e.title.length > 0)
+
   return {
-    navigation: parseNavigation(html),
-    marquees: parseMarquees(html),
-    latestJobs:  toTypedEntries<JobEntry>(extractBoxLinks('Latest Jobs'), 'job'),
-    results:     toTypedEntries<ResultEntry>(extractBoxLinks('Result'), 'res'),
-    admitCards:  toTypedEntries<AdmitCardEntry>(extractBoxLinks('Admit Card'), 'adm'),
-    answerKeys:  toTypedEntries<AnswerKeyEntry>(extractBoxLinks('Answer Key'), 'ans'),
-    syllabus:    toTypedEntries<SyllabusEntry>(extractBoxLinks('Syllabus'), 'syl'),
-    admissions:  toTypedEntries<AdmissionEntry>(extractBoxLinks('Admission'), 'adms'),
-    importantLinks: [],
-    lastUpdated: new Date().toISOString(),
+    navigation:   parseNavigation(html),
+    marquees:     parseMarquees(html),
+    spotlightGrid,
+    latestJobs:   toTypedEntries<JobEntry>(extractSection('/latestjob/'), 'job'),
+    results:      toTypedEntries<ResultEntry>(extractSection('/result/'), 'res'),
+    admitCards:   toTypedEntries<AdmitCardEntry>(extractSection('/admitcard/'), 'adm'),
+    answerKeys:   toTypedEntries<AnswerKeyEntry>(extractSection('/answerkey/'), 'ans'),
+    syllabus:     toTypedEntries<SyllabusEntry>(extractSection('/syllabus/'), 'syl'),
+    admissions:   toTypedEntries<AdmissionEntry>(extractSection('/admission/'), 'adms'),
+    important:    toTypedEntries<ImportantEntry>(extractSection('/important/'), 'imp'),
+    verification: toTypedEntries<VerificationEntry>(extractSection('/verification/'), 'ver'),
+    lastUpdated:  new Date().toISOString(),
   }
 }
 
-// Used by /admitcard/, /result/, /latestjob/ etc. — no keyword filter needed
+// ─── List page scraper (used by /result/, /admitcard/, etc.) ─────────────────
+
 export async function scrapePage(
   url: string,
   page = 1,
@@ -334,7 +375,8 @@ export async function scrapePage(
   }
 }
 
-// Used by /api/scrape/detail?url=/mp/mpesb-iti-training-officer-jan26/
+// ─── Detail page scraper ──────────────────────────────────────────────────────
+
 export async function scrapeDetailPage(url: string): Promise<DetailPageResult> {
   const { html, title } = await fetchPage(url)
   const $ = cheerio.load(html)
