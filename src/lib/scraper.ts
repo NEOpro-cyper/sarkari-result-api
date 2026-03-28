@@ -264,40 +264,37 @@ function toTypedEntries<T>(
   })) as T[]
 }
 
-// ─── Home page scraper ────────────────────────────────────────────────────────
+// ─── FIXED: Extract section by finding the correct structure ─────────────────
 
-export async function scrapeHomePage(): Promise<HomePageData> {
-  const { html } = await fetchPage(BASE_URL)
-  const $ = cheerio.load(html)
+function extractSectionByHeadingText($: cheerio.CheerioAPI, headingText: string) {
+  const results: Array<{
+    title: string
+    path: string | null
+    externalHref: string | null
+    isNew: boolean
+    isUpdated: boolean
+  }> = []
+  const seen = new Set<string>()
 
-  // ── Extract links from a section by its heading href ──────────────────────
-function extractSection(headingHref: string) {
-    const results: Array<{
-      title: string
-      path: string | null
-      externalHref: string | null
-      isNew: boolean
-      isUpdated: boolean
-    }> = []
-    const seen = new Set<string>()
+  // Find all divs with id="heading"
+  $('[id="heading"]').each((_, headingDiv) => {
+    const headingLink = $(headingDiv).find('a').first()
+    const linkText = headingLink.text().trim()
+    
+    // Check if this is the section we're looking for
+    if (linkText.toLowerCase() !== headingText.toLowerCase()) return
 
-    const fullHref = `${BASE_URL}${headingHref}`
-    const headingAnchor = $(`a[href="${fullHref}"], a[href="${headingHref}"]`).first()
-    if (!headingAnchor.length) return results
-
-    // #heading div is the anchor's grandparent (a > div#font > div#heading)
-    // OR the anchor's direct parent for some sections
-    // Either way, walk up to the div that has id="heading"
-    const headingDiv = headingAnchor.closest('[id="heading"]')
-    if (!headingDiv.length) return results
-
-    // #post is the next sibling div after #heading inside the same box
-    const postDiv = headingDiv.next('[id="post"]')
-    if (!postDiv.length) return results
-
-    postDiv.find('a[href]').each((_, el) => {
+    // Get the parent box (either #box1 or #box2)
+    const boxDiv = $(headingDiv).parent()
+    
+    // Find the #post div within the same box
+    const postDiv = boxDiv.find('[id="post"]').first()
+    
+    // Extract all links from the post section
+    postDiv.find('li a[href]').each((_, el) => {
       const href = $(el).attr('href') || ''
       const title = $(el).text().replace(/\s+/g, ' ').trim()
+      
       if (!href || href.includes('javascript:') || href.startsWith('#')) return
       if (title.length < 5) return
 
@@ -315,12 +312,19 @@ function extractSection(headingHref: string) {
         isUpdated: /updated/i.test(liText),
       })
     })
+  })
 
-    return results
-  }
+  return results
+}
+
+// ─── Home page scraper ────────────────────────────────────────────────────────
+
+export async function scrapeHomePage(): Promise<HomePageData> {
+  const { html } = await fetchPage(BASE_URL)
+  const $ = cheerio.load(html)
 
   // ── Spotlight grid (8 icon buttons) ──────────────────────────────────────
-const spotlightGrid = $('table.box-data').first().find('td').map((_, td) => {
+  const spotlightGrid = $('table.box-data').first().find('td').map((_, td) => {
     const a = $(td).find('a').first()
     const href = a.attr('href') || ''
     const rawHtml = a.html() || ''
@@ -340,14 +344,14 @@ const spotlightGrid = $('table.box-data').first().find('td').map((_, td) => {
     navigation:   parseNavigation(html),
     marquees:     parseMarquees(html),
     spotlightGrid,
-    latestJobs:   toTypedEntries<JobEntry>(extractSection('/latestjob/'), 'job'),
-    results:      toTypedEntries<ResultEntry>(extractSection('/result/'), 'res'),
-    admitCards:   toTypedEntries<AdmitCardEntry>(extractSection('/admitcard/'), 'adm'),
-    answerKeys:   toTypedEntries<AnswerKeyEntry>(extractSection('/answerkey/'), 'ans'),
-    syllabus:     toTypedEntries<SyllabusEntry>(extractSection('/syllabus/'), 'syl'),
-    admissions:   toTypedEntries<AdmissionEntry>(extractSection('/admission/'), 'adms'),
-    important:    toTypedEntries<ImportantEntry>(extractSection('/important/'), 'imp'),
-    verification: toTypedEntries<VerificationEntry>(extractSection('/verification/'), 'ver'),
+    latestJobs:   toTypedEntries<JobEntry>(extractSectionByHeadingText($, 'Latest Jobs'), 'job'),
+    results:      toTypedEntries<ResultEntry>(extractSectionByHeadingText($, 'Result'), 'res'),
+    admitCards:   toTypedEntries<AdmitCardEntry>(extractSectionByHeadingText($, 'Admit Card'), 'adm'),
+    answerKeys:   toTypedEntries<AnswerKeyEntry>(extractSectionByHeadingText($, 'Answer Key'), 'ans'),
+    syllabus:     toTypedEntries<SyllabusEntry>(extractSectionByHeadingText($, 'Syllabus'), 'syl'),
+    admissions:   toTypedEntries<AdmissionEntry>(extractSectionByHeadingText($, 'Admission'), 'adms'),
+    important:    toTypedEntries<ImportantEntry>(extractSectionByHeadingText($, 'Important'), 'imp'),
+    verification: toTypedEntries<VerificationEntry>(extractSectionByHeadingText($, 'Certificate Verification'), 'ver'),
     lastUpdated:  new Date().toISOString(),
   }
 }
