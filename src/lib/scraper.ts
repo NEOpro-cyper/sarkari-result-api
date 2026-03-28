@@ -220,20 +220,20 @@ function parseSectionFromHTML($: cheerio.CheerioAPI, sectionTitle: string): Arra
   
   const seen = new Set<string>()
 
-  // Find the heading that matches our section
-  $('div#heading div#font a, div#heading div a').each((_, headingEl) => {
-    const headingText = $(headingEl).text().trim()
+  // Find all boxes (box1, box2, etc.)
+  $('div[id^="box"]').each((_, boxEl) => {
+    // Find the heading link inside this box
+    const headingLink = $(boxEl).find('div#heading div#font a, div#heading div a').first()
+    const headingText = headingLink.text().trim()
     
     if (headingText === sectionTitle) {
-      // Get the parent box container
-      const boxContainer = $(headingEl).closest('div[id^="box"]')
-      
-      // Find all links in the post section of this box
-      boxContainer.find('div#post ul li a').each((_, linkEl) => {
+      // Found the right section! Now extract all links from its post div
+      $(boxEl).find('div#post ul li a').each((_, linkEl) => {
         const href = $(linkEl).attr('href') || ''
         const title = $(linkEl).text().replace(/\s+/g, ' ').trim()
         const parentText = $(linkEl).parent().text()
         
+        // Skip invalid links
         if (!href || href.includes('javascript:') || href.startsWith('#')) return
         if (title.length < 5) return
         
@@ -251,6 +251,8 @@ function parseSectionFromHTML($: cheerio.CheerioAPI, sectionTitle: string): Arra
           isUpdated: /updated/i.test(parentText),
         })
       })
+      
+      return false // Stop searching once we found the section
     }
   })
 
