@@ -292,7 +292,7 @@ export async function scrapeHomePage(): Promise<HomePageData> {
     const box = headingAnchor.closest('div[id^="box"], div.table-center')
     if (!box.length) return results
 
-    box.children('#post').first().find('a[href]').each((_, el) => {
+    box.find('#post').first().find('a[href]').each((_, el) => {
       const href = $(el).attr('href') || ''
       const title = $(el).text().replace(/\s+/g, ' ').trim()
       if (!href || href.includes('javascript:') || href.startsWith('#')) return
@@ -317,10 +317,13 @@ export async function scrapeHomePage(): Promise<HomePageData> {
   }
 
   // ── Spotlight grid (8 icon buttons) ──────────────────────────────────────
-  const spotlightGrid = $('table.box-data').first().find('td').map((_, td) => {
+const spotlightGrid = $('table.box-data').first().find('td').map((_, td) => {
     const a = $(td).find('a').first()
     const href = a.attr('href') || ''
-    const lines = a.text().split(/\n/).map(s => s.trim()).filter(Boolean)
+    const rawHtml = a.html() || ''
+    const withNewlines = rawHtml.replace(/<br\s*\/?>/gi, '\n')
+    const lines = cheerio.load(withNewlines)('body').text()
+      .split('\n').map(s => s.trim()).filter(Boolean)
     const { path, externalHref } = toPath(href)
     return {
       title: lines[0] || '',
