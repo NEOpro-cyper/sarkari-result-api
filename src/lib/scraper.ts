@@ -26,6 +26,17 @@ const RETRY_ATTEMPTS = 3
 const RETRY_DELAY_MS = 1200
 const NAV_LABELS = ['Home', 'Latest Jobs', 'Results', 'Admit Card', 'Answer Key', 'Syllabus', 'Search', 'Contact Us']
 
+// Single-segment category paths — not actual entries
+const SKIP_PATHS = new Set([
+  '/', '/latestjob/', '/result/', '/admitcard/', '/answerkey/',
+  '/syllabus/', '/search/', '/contactus/', '/privacy-policy/',
+  '/sitemap/', '/about/', '/upsssc/', '/railwayall/', '/uppscall/',
+  '/boardall/', '/policeall/', '/sscall/', '/upscall/', '/bpsc/',
+  '/ibpsall/', '/rpsc/', '/tetall/', '/indian-air-force/',
+  '/indian-navy/', '/coast-guard/', '/haryana-hssc/', '/delhi-dsssb/',
+  '/verification/', '/important/', '/admission/',
+])
+
 // ─── Cache ────────────────────────────────────────────────────────────────────
 
 const cache = new Map<string, { data: unknown; timestamp: number }>()
@@ -199,15 +210,82 @@ function parseMarquees(html: string): MarqueeItem[] {
   return items
 }
 
-function parseAllPageLinks(html: string): Array<{
+// ─── List page parser ─────────────────────────────────────────────────────────
+// Targets only <ul><li> entries in main content, skips nav/footer/category links
+
+function parseListPage(html: string): Array<{
   title: string
   path: string | null
   externalHref: string | null
   isNew: boolean
   isUpdated: boolean
+  postDate: string | null
 }> {
   const $ = cheerio.load(html)
-  const entries: Array<{
+  const results: Array<{
+    title: string
+    path: string | null
+    externalHref: string | null
+    isNew: boolean
+    isUpdated: boolean
+    postDate: string | null
+  }> = []
+  const seen = new Set<string>()
+  const datePattern = /\d{2}\/\d{2}\/\d{4}/
+
+  $('ul li').each((_, li) => {
+    const a = $(li).find('a[href]').first()
+    const href = a.attr('href') || ''
+    const title = a.text().replace(/\s+/g, ' ').trim()
+
+    if (!href || href.includes('javascript:') || href.startsWith('#')) return
+
+    // Real job/result titles are long — nav links are short (< 10 chars)
+    if (title.length < 10) return
+
+    const { path, externalHref } = toPath(href)
+
+    // Skip known category/nav paths
+    if (path && SKIP_PATHS.has(path)) return
+
+    // Must be a deep path like /2026/something/ or /railway/rrb-alp/
+    if (path) {
+      const segments = path.split('/').filter(Boolean)
+      if (segments.length < 2) return
+    }
+
+    const key = `${title}|${path ?? externalHref}`
+    if (seen.has(key)) return
+    seen.add(key)
+
+    const liEl = $(li)
+    const dateMatch = liEl.text().match(datePattern)
+
+    // SarkariResult uses new.gif / update.gif images for badges
+    const isNew = liEl.find('img[src*="new"]').length > 0
+      || /\bnew\b/i.test(liEl.find('span, b, font').text())
+
+    const isUpdated = liEl.find('img[src*="upd"]').length > 0
+      || /updated/i.test(liEl.find('span, b, font').text())
+
+    results.push({
+      title,
+      path,
+      externalHref,
+      isNew,
+      isUpdated,
+      postDate: dateMatch ? dateMatch[0] : null,
+    })
+  })
+
+  return results
+}
+
+// ─── Section extractor (home page) ───────────────────────────────────────────
+
+function extractSectionByHeadingText(html: string, headingText: string) {
+  const $ = cheerio.load(html)
+  const results: Array<{
     title: string
     path: string | null
     externalHref: string | null
@@ -216,30 +294,37 @@ function parseAllPageLinks(html: string): Array<{
   }> = []
   const seen = new Set<string>()
 
-  $('a[href]').each((_, el) => {
-    const href = $(el).attr('href') || ''
-    const title = $(el).text().replace(/\s+/g, ' ').trim()
-    const parentText = $(el).parent().text()
+  $('[id="heading"]').each((_, headingDiv) => {
+    const headingLink = $(headingDiv).find('a').first()
+    const linkText = headingLink.text().trim()
+    if (linkText.toLowerCase() !== headingText.toLowerCase()) return
 
-    if (!href || href.includes('javascript:') || href.startsWith('#')) return
-    if (title.length < 5) return
-    if (/^(home|contact|privacy|sitemap|about)$/i.test(title)) return
+    const boxDiv = $(headingDiv).parent()
+    const postDiv = boxDiv.find('[id="post"]').first()
 
-    const { path, externalHref } = toPath(href)
-    const key = `${title}|${path ?? externalHref}`
-    if (seen.has(key)) return
-    seen.add(key)
+    postDiv.find('li a[href]').each((_, el) => {
+      const href = $(el).attr('href') || ''
+      const title = $(el).text().replace(/\s+/g, ' ').trim()
+      if (!href || href.includes('javascript:') || href.startsWith('#')) return
+      if (title.length < 5) return
 
-    entries.push({
-      title,
-      path,
-      externalHref,
-      isNew: /\bnew\b/i.test(parentText),
-      isUpdated: /updated/i.test(parentText),
+      const { path, externalHref } = toPath(href)
+      const key = `${title}|${path ?? externalHref}`
+      if (seen.has(key)) return
+      seen.add(key)
+
+      const li = $(el).closest('li')
+      results.push({
+        title,
+        path,
+        externalHref,
+        isNew: li.find('img[src*="new"]').length > 0 || /\bnew\b/i.test(li.find('span, b, font').text()),
+        isUpdated: li.find('img[src*="upd"]').length > 0 || /updated/i.test(li.find('span, b, font').text()),
+      })
     })
   })
 
-  return entries
+  return results
 }
 
 function toTypedEntries<T>(
@@ -264,67 +349,12 @@ function toTypedEntries<T>(
   })) as T[]
 }
 
-// ─── FIXED: Extract section by finding the correct structure ─────────────────
-
-function extractSectionByHeadingText(html: string, headingText: string) {
-  const $ = cheerio.load(html)
-  const results: Array<{
-    title: string
-    path: string | null
-    externalHref: string | null
-    isNew: boolean
-    isUpdated: boolean
-  }> = []
-  const seen = new Set<string>()
-
-  // Find all divs with id="heading"
-  $('[id="heading"]').each((_, headingDiv) => {
-    const headingLink = $(headingDiv).find('a').first()
-    const linkText = headingLink.text().trim()
-    
-    // Check if this is the section we're looking for
-    if (linkText.toLowerCase() !== headingText.toLowerCase()) return
-
-    // Get the parent box (either #box1 or #box2)
-    const boxDiv = $(headingDiv).parent()
-    
-    // Find the #post div within the same box
-    const postDiv = boxDiv.find('[id="post"]').first()
-    
-    // Extract all links from the post section
-    postDiv.find('li a[href]').each((_, el) => {
-      const href = $(el).attr('href') || ''
-      const title = $(el).text().replace(/\s+/g, ' ').trim()
-      
-      if (!href || href.includes('javascript:') || href.startsWith('#')) return
-      if (title.length < 5) return
-
-      const { path, externalHref } = toPath(href)
-      const key = `${title}|${path ?? externalHref}`
-      if (seen.has(key)) return
-      seen.add(key)
-
-      const liText = $(el).closest('li').text()
-      results.push({
-        title,
-        path,
-        externalHref,
-        isNew: /\bnew\b/i.test(liText),
-        isUpdated: /updated/i.test(liText),
-      })
-    })
-  })
-
-  return results
-}
-
-// ─── Home page scraper ────────────────────────────────────────────────────────
+// ─── Public scrape functions ──────────────────────────────────────────────────
 
 export async function scrapeHomePage(): Promise<HomePageData> {
   const { html } = await fetchPage(BASE_URL)
   const $ = cheerio.load(html)
 
-  // ── Spotlight grid (8 icon buttons) ──────────────────────────────────────
   const spotlightGrid = $('table.box-data').first().find('td').map((_, td) => {
     const a = $(td).find('a').first()
     const href = a.attr('href') || ''
@@ -333,12 +363,7 @@ export async function scrapeHomePage(): Promise<HomePageData> {
     const lines = cheerio.load(withNewlines)('body').text()
       .split('\n').map(s => s.trim()).filter(Boolean)
     const { path, externalHref } = toPath(href)
-    return {
-      title: lines[0] || '',
-      action: lines[1] || '',
-      path,
-      externalHref,
-    }
+    return { title: lines[0] || '', action: lines[1] || '', path, externalHref }
   }).get().filter(e => e.title.length > 0)
 
   return {
@@ -357,36 +382,24 @@ export async function scrapeHomePage(): Promise<HomePageData> {
   }
 }
 
-// ─── List page scraper (used by /result/, /admitcard/, etc.) ─────────────────
-
 export async function scrapePage(
   url: string,
   page = 1,
   limit = 30
 ): Promise<PageResult> {
   const { html, title } = await fetchPage(url)
-  const all = parseAllPageLinks(html).filter(e =>
-    e.path !== '/' &&
-    e.path !== null &&
-    !e.path.includes('/search') &&
-    !e.path.includes('/contactus') &&
-    !e.path.includes('/privacy')
-  )
-
+  const all = parseListPage(html)
   const start = (page - 1) * limit
-  const entries = all.slice(start, start + limit)
 
   return {
     title: title || 'Page',
-    entries,
+    entries: all.slice(start, start + limit),
     page,
     limit,
     total: all.length,
     hasMore: start + limit < all.length,
   }
 }
-
-// ─── Detail page scraper ──────────────────────────────────────────────────────
 
 export async function scrapeDetailPage(url: string): Promise<DetailPageResult> {
   const { html, title } = await fetchPage(url)
